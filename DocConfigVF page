@@ -1,0 +1,519 @@
+<apex:page showHeader="false" sidebar="false" applyBodyTag="false" docType="html-5.0" lightningStylesheets="true" standardStylesheets="true" controller="DocumentConfigApexController">
+    <apex:includeLightning />
+    <div class="wrapper">  
+        <div class="main-wrapper">
+           <div class='fieldsbox'>
+            <div style="display:flex;justify-content:center; align-items:center;margin-top:10px;">
+                <button class="configSaveBtn" id="savePdfBtn">Click for Document Configuration</button>  
+            </div>
+              <div>
+                <h3 style="margin-left:7px;">
+                  Related Object Fields
+                 </h3>
+                 <input 
+                 type="text" 
+                 id="fieldSearch" 
+                 placeholder="Search fields..." 
+                 style="margin-left:7px; margin-bottom:5px; width:90%; border:1px solid black"
+               /> 
+                 <div id="fieldContainer" class="field-container">
+                  <p>Loading Related Object Fields...</p>
+              </div>
+              <div class="static-field-container">
+                  <h3>Static Fields</h3>
+                  <div id="staticFieldsContainer" class="draggable-list">
+                    <p>Loading static field...</p>
+                  </div>
+                </div>
+               </div>    
+           </div>
+            <div style="display:flex;">
+                <div id="pdfContainer"></div>
+            </div>
+        </div> 
+    </div>
+     
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.0/fabric.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    
+    <script>
+        document.addEventListener("DOMContentLoaded", function () {
+            let objectName = getParameterByName("objectName")
+            console.log('objectName:::>',objectName);
+            if (objectName) {
+                fetchObjectFields(objectName);
+            } else {
+                console.error("No object name provided.");
+            }
+            let pdfId = getParameterByName("pdfId");
+            console.log('PdfId:::>',pdfId);
+            if(pdfId){
+                getBase64PDF(pdfId)
+            }
+            else{
+                console.log('pdfId not found::');
+            }
+            let staticFields = ['Text', 'Checkbox', 'Signature','Date']
+            renderStaticDraggableFields(staticFields);
+
+            let fieldSearch = document.getElementById("fieldSearch");
+  if (fieldSearch) {
+    fieldSearch.addEventListener("input", function () {
+      let searchTerm = fieldSearch.value.toLowerCase();
+      let fieldElements = document.querySelectorAll("#fieldContainer .draggableField");
+      
+      fieldElements.forEach(fieldEl => {
+        let text = fieldEl.innerText.toLowerCase();
+        if (text.includes(searchTerm)) {
+          fieldEl.style.display = "";
+        } else {
+          fieldEl.style.display = "none";
+        }
+      });
+    });
+  }
+        });
+
+    function getParameterByName(name) {
+        let url = window.location.href;
+        name = name.replace(/[\[\]]/g, "\\$&");
+        let regex = new RegExp("[?&]" + name + "(=([^&#]*)|&|#|$)"),
+            results = regex.exec(url);
+        return results ? decodeURIComponent(results[2].replace(/\+/g, " ")) : null;
+    }
+   
+    function fetchObjectFields(objectName) {
+        console.log('function run:::>')
+        Visualforce.remoting.Manager.invokeAction(
+            "{!$RemoteAction.DocumentConfigApexController.getTextFields}",objectName,
+            function(result, event) {
+                if (event.status) {
+                    renderDraggableFields(result);
+                } else {
+                    console.error("Error fetching fields", event);
+                }
+            }, 
+            { escape: false }
+        );
+    }
+    
+    function getBase64PDF(pdfId) {
+    Visualforce.remoting.Manager.invokeAction(
+        "{!$RemoteAction.DocumentConfigApexController.getBase64PDF}", pdfId,
+        function (result, event) {
+            if (event.status) {      
+                try {
+                    let data = JSON.parse(result);
+                    if (data.base64PDF) {
+                        let base64Atob = window.atob(data.base64PDF);
+                        loadPdf(base64Atob); 
+                        if (data.jsonConfig && data.jsonConfig !== "") {
+                            let savedFields = JSON.parse(data.jsonConfig);
+                            console.log("Rendering saved fields:", savedFields);
+                            setTimeout(() => renderSavedFields(savedFields), 1000);
+                        }
+                    }
+                } catch (error) {
+                    console.error("Error parsing JSON response:", error);
+                }
+            } else {
+                console.error("Error fetching fields", event);
+            }
+        },
+        { escape: false }
+    );
+}
+
+
+    
+    function renderStaticDraggableFields(fields){
+        console.log('renderStaticDraggableFields');
+        let staticFieldsContainer = document.getElementById("staticFieldsContainer");
+        staticFieldsContainer.innerHTML = "";
+        fields.forEach(field => {
+            let fieldElement = document.createElement("p");
+            fieldElement.innerText = field;
+            fieldElement.classList.add("draggableField");
+            fieldElement.setAttribute("draggable", "true");
+            
+            fieldElement.addEventListener("dragstart", function (event) {
+            event.dataTransfer.setData("text", event.target.innerText);
+        });
+        staticFieldsContainer.appendChild(fieldElement);
+    });
+    }
+    function renderDraggableFields(fields) {
+        console.log('renderDragFunction');
+        let fieldContainer = document.getElementById("fieldContainer");
+        fieldContainer.innerHTML = "";
+        fields.forEach(field => {
+            let fieldElement = document.createElement("p");
+            fieldElement.innerText = field;
+            fieldElement.classList.add("draggableField");
+            fieldElement.setAttribute("draggable", "true");
+            
+            fieldElement.addEventListener("dragstart", function (event) {
+            console.log('event::>>>',event);
+            console.log('Drag Start: ', event.target.innerText);
+            event.dataTransfer.setData("text", event.target.innerText);
+        });
+        
+        fieldContainer.appendChild(fieldElement);
+    });
+    }
+    
+    const pdfContainer = document.getElementById("pdfContainer");
+    async function loadPdf(url) {
+        const pdf = await pdfjsLib.getDocument({data: url}).promise;
+        console.log('pdfNumPages::>',pdf.numPages);
+        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+            pdf.getPage(pageNum).then(page => {
+            let scale = 1.5;
+            let viewport = page.getViewport({ scale });
+            let pageContainer = document.createElement("div");
+            pageContainer.classList.add("pdf-page");
+            pageContainer.setAttribute("data-page", pageNum); 
+            pdfContainer.appendChild(pageContainer);
+            
+            let pdfCanvas = document.createElement("canvas");
+            pdfCanvas.width = viewport.width;
+            pdfCanvas.height = viewport.height;
+            pdfCanvas.classList.add("pdf-canvas");
+            
+            let context = pdfCanvas.getContext("2d");
+            let renderContext = { canvasContext: context, viewport: viewport };
+            page.render(renderContext);
+            
+            pageContainer.appendChild(pdfCanvas);
+            
+            let fabricCanvasElem = document.createElement("canvas");
+            fabricCanvasElem.width = viewport.width;
+            fabricCanvasElem.height = viewport.height;
+            fabricCanvasElem.classList.add("fabric-canvas");
+            
+            pageContainer.appendChild(fabricCanvasElem);
+            let fabricCanvas = new fabric.Canvas(fabricCanvasElem);
+            fabricCanvases.push(fabricCanvas);
+            
+            pageContainer.addEventListener("dragover", function (event) {
+                event.preventDefault();
+            });
+            
+            pageContainer.addEventListener("drop", function (event) {
+                event.preventDefault();
+                let text = event.dataTransfer.getData("text");
+                console.log('text>>>>',text);
+                let rect = pageContainer.getBoundingClientRect();
+                let x = event.clientX - rect.left;
+                let y = event.clientY - rect.top;
+                let fieldText;
+                
+                let uniqueId = Date.now() + Math.random(); 
+                let fieldEntry = { id: uniqueId, fieldType: text, x: x, y: y, pageNumber: parseInt(pageContainer.getAttribute("data-page")), fieldApiName: text };
+
+                if (text === "Checkbox") {
+                    console.log('checkbox');
+                    fieldText = new fabric.Rect({
+                        left: x, top: y, width:20, height: 20, fill: "transparent", stroke: "black", strokeWidth: 1,editable:true
+                    });
+                    fabricCanvas.add(fieldText);
+                } else if (text === "Signature") {
+                    console.log('Signature');
+                    fieldText = new fabric.Rect({
+                     left: x, top: y, width: 100, height: 50, fill: 'transparent', stroke: 'black', strokeWidth: 1,editable: true
+                    });
+                    fieldEntry.w = 100;
+                    fieldEntry.h = 50;
+                    //fabricCanvas.isDrawingMode = true;
+                    fabricCanvas.add(fieldText);
+                } else {
+                    fieldText = new fabric.IText(text, {
+                        left: x, top: y, fontSize: 16, fill: 'blue', editable: true,
+                        backgroundColor: "white", padding: 5, borderColor: "#ddd", cornerSize: 6
+                    });
+                }
+                
+                let pageNum = parseInt(pageContainer.getAttribute("data-page"));
+                
+                fieldDataArray.push(fieldEntry);
+                
+                let removeButton = new fabric.Text("❌", {
+                    left: x + fieldText.width + 10, top: y, fontSize: 14, fill: 'red', selectable: true, hoverCursor: "pointer"
+                });
+                
+                removeButton.on("mousedown", function () {
+                    fabricCanvas.remove(fieldText);
+                    fabricCanvas.remove(removeButton);
+                    removeFieldFromArray(uniqueId);
+                });
+                
+                fabricCanvas.add(fieldText);
+                fabricCanvas.add(removeButton);
+                
+                fieldText.on("moving", function () {
+                    removeButton.set({
+                        left: fieldText.left + fieldText.width + 10,
+                        top: fieldText.top
+                    });
+                    updateFieldPosition(uniqueId, fieldText.left, fieldText.top);
+                    fabricCanvas.renderAll();
+                });
+            });
+        });
+    }
+    }
+    
+    let fabricCanvases = [];
+    let fieldDataArray = [];
+    
+    function removeFieldFromArray(id) {
+        fieldDataArray = fieldDataArray.filter(field => field.id !== id);
+        console.log("Updated Field Data:", fieldDataArray);
+    }
+    
+    function updateFieldPosition(id, newX, newY) {
+        let field = fieldDataArray.find(field => field.id === id);
+        if (field) {
+            field.x = newX;
+            field.y = newY;
+        }
+        console.log("Updated Field Data:", fieldDataArray);
+    }
+    
+
+    function renderSavedFields(fields) {
+    console.log("Rendering saved fields:", fields);
+    
+    fields.forEach(field => {
+        let pageContainer = document.querySelector(`[data-page='${field.pageNumber}']`);
+        if (!pageContainer) {
+            console.error(`Page ${field.pageNumber} not found`);
+            return;
+        }
+
+        let fabricCanvas = fabricCanvases[field.pageNumber - 1];
+        let fieldText;
+
+        if (field.fieldType === "Checkbox") {
+            fieldText = new fabric.Rect({
+                left: field.x, top: field.y, width: 20, height: 20, fill: "transparent", stroke: "black", strokeWidth: 1
+            });
+        } else if (field.fieldType === "Signature") {
+            fieldText = new fabric.Rect({
+                left: field.x, top: field.y, width: 100, height: 50, fill: "transparent", stroke: "black", strokeWidth: 1
+            });
+        } else {
+            fieldText = new fabric.IText(field.fieldApiName, {
+                left: field.x, top: field.y, fontSize: 16, fill: 'blue', editable: true,
+                backgroundColor: "white", padding: 5, borderColor: "#ddd", cornerSize: 6
+            });
+        }
+
+        let uniqueId = field.id || Date.now() + Math.random(); 
+        fieldDataArray.push({
+            id: uniqueId,
+            fieldType: field.fieldType,
+            fieldApiName: field.fieldApiName,
+            x: field.x,
+            y: field.y,
+            pageNumber: field.pageNumber
+        });
+
+        let removeButton = new fabric.Text("❌", {
+            left: fieldText.left + fieldText.width + 10, 
+            top: fieldText.top, 
+            fontSize: 14, 
+            fill: 'red', 
+            selectable: true
+        });
+
+        removeButton.on("mousedown", function () {
+            fabricCanvas.remove(fieldText);
+            fabricCanvas.remove(removeButton);
+            removeFieldFromArray(uniqueId);
+        });
+
+        fieldText.on("moving", function () {
+            removeButton.set({
+                left: fieldText.left + fieldText.width + 10,
+                top: fieldText.top
+            });
+            updateFieldPosition(uniqueId, fieldText.left, fieldText.top);
+            fabricCanvas.renderAll();
+        });
+
+        fabricCanvas.add(fieldText);
+        fabricCanvas.add(removeButton);
+    });
+}
+    document.addEventListener("DOMContentLoaded", function () {            
+        document.getElementById("savePdfBtn").addEventListener("click", function () {
+            this.classList.toggle("active");
+            this.textContent = "Saved Configuration";
+            savePdf();
+        });
+        
+        function savePdf() {
+            console.log("Saving PDF with Fields:", JSON.stringify(fieldDataArray));
+            
+            /*  let images = [];
+
+        fabricCanvases.forEach((fabricCanvas, index) => {
+            const pdfCanvas = document.querySelectorAll(".pdf-canvas")[index];
+            const pdfContext = pdfCanvas.getContext("2d");
+
+            let combinedCanvas = document.createElement("canvas");
+            combinedCanvas.width = pdfCanvas.width;
+            combinedCanvas.height = pdfCanvas.height;
+
+            let combinedContext = combinedCanvas.getContext("2d");
+            combinedContext.drawImage(pdfCanvas, 0, 0);
+            combinedContext.drawImage(fabricCanvas.lowerCanvasEl, 0, 0);
+            images.push(combinedCanvas.toDataURL());
+        });
+
+        const { jsPDF } = window.jspdf;
+        let doc = new jsPDF();
+
+        images.forEach((image, index) => {
+            if (index > 0) {
+                doc.addPage();
+            }
+            doc.addImage(image, "JPEG", 10, 10, 190, 277);
+        });
+
+     doc.save("modified_pdf.pdf");*/
+        console.log('JSON.stringify(fieldDataArray)',JSON.stringify(fieldDataArray));
+        saveFieldDataToSalesforce(JSON.stringify(fieldDataArray));
+    }
+    });
+    
+    function saveFieldDataToSalesforce(fieldDataJson) {
+        let pdfId = getParameterByName("pdfId");
+        let pdfName = getParameterByName("pdfName");
+        Visualforce.remoting.Manager.invokeAction(
+            "{!$RemoteAction.DocumentConfigApexController.saveFieldDataToSalesforce}",
+            fieldDataJson, pdfId,pdfName,
+            function(result, event) {
+                if (event.status) {
+                    console.log('Field data saved to Salesforce successfully');
+                    alert("Document configuration saved successfully!");
+                } else {
+                    console.error('Error saving field data to Salesforce:', event.message);
+                    alert("Error saving data: " + event.message);
+                }
+            },
+            { escape: false }
+        );
+    }
+    </script>
+    
+<style>
+   .wrapper{
+    display: flex;
+    flex-direction:column;
+   }
+   .main-wrapper{
+    display: flex;
+    flex-direction: row;
+    }
+    
+    .fieldsbox{
+      border: 3px solid #333;
+    }
+    #pdfContainer {
+        width: 100%;
+        height: 100vh;
+        overflow-y: auto;
+        border: 3px solid #333;
+        border-radius: 3px;
+        box-shadow: 2px 2px 10px rgba(0, 0, 0, 0.3);
+        padding: 20px;
+        background: #f9f9f9;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        position: relative;
+        }
+        
+        .pdf-page {
+        border: 1px solid #3f3b3b;
+        background: white;
+        position: relative;
+        margin-bottom: 10px;
+        }
+        
+        .pdf-canvas, .fabric-canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        }
+        
+        .field-container {
+        padding: 10px;
+        background: #ffffff;
+        display: flex;
+        flex-wrap: wrap;
+        margin:5px;
+        gap: 10px;
+        max-height:200px;
+        overflow-x: auto;
+        border:2px solid black;     
+        }
+        .static-field-container{
+        padding: 10px;
+        background: #ffffff;
+        display: flex;
+        flex-direction:column;
+        gap: 5px;
+        max-height:150px;
+        overflow-y: auto;
+        }
+        #staticFieldsContainer{
+        display: flex;
+        flex-direction:row;
+        gap: 10px;
+        padding: 10px;
+        overflow-y: auto;
+        border:2px solid black;
+        }
+        .draggableField {
+        padding: 5px 10px;
+        background: #ffffff;
+        color: blue;
+        cursor: grab;
+        border-radius: 2px;
+        border: 1px solid #007bff;
+        }
+        
+        .remove-btn {
+        color: red;
+        cursor: pointer;
+        font-size: 14px;
+        margin-left: 8px;
+        font-weight: bold;
+        }
+        
+        .remove-btn:hover {
+        color: darkred;
+        }
+
+        #savePdfBtn:hover {
+             color:black;
+        }
+        #savePdfBtn{
+        background-color:blue;
+        color:white;
+        font-weight:bold;
+        height:35px;
+        width:250px;
+        border-radius:5px;
+        }
+        .active {
+          background-color: #28a745 !important; 
+       }
+    </style>
+</apex:page>
+
